@@ -24,12 +24,22 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Flutter compatible with project
+      - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.24.5'
+          flutter-version: '3.29.3'
           channel: stable
           cache: true
+
+      - name: Pin compatible UI dependency
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("pubspec.yaml")
+          s=p.read_text()
+          s=s.replace("shadcn_ui: ^0.19.3", "shadcn_ui: 0.19.3")
+          p.write_text(s)
+          PY
 
       - name: Flutter dependencies
         run: flutter pub get

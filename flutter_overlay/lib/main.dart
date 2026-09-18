@@ -23,7 +23,13 @@ const channel = MethodChannel('studio/device');
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   FFIBindings.initializeBindings('CPU');
-  runApp(const MaterialApp(debugShowCheckedModeBanner: false, home: Studio()));
+  runApp(MaterialApp(
+    debugShowCheckedModeBanner: false,
+    theme: ThemeData(
+      useMaterial3: true, brightness: Brightness.dark,
+      scaffoldBackgroundColor: const Color(0xFF101018),
+      colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFFAE87FF), brightness: Brightness.dark),
+    ), home: const Studio()));
 }
 
 class Studio extends StatefulWidget {
@@ -224,29 +230,96 @@ class _StudioState extends State<Studio> {
     prompt.dispose(); resultSubscription?.cancel(); engine?.dispose(); super.dispose();
   }
 
+  Widget characterCard(String name, String subtitle, Color accent) {
+    final selected = character == name;
+    return Expanded(child: InkWell(
+      borderRadius: BorderRadius.circular(22),
+      onTap: busy ? null : () => setState(() => character = name),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: selected ? accent.withOpacity(0.18) : const Color(0xFF1B1B27),
+          border: Border.all(color: selected ? accent : const Color(0xFF343341), width: selected ? 2 : 1),
+          borderRadius: BorderRadius.circular(22),
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          CircleAvatar(backgroundColor: accent.withOpacity(0.25), radius: 20,
+            child: Text(name.substring(0, 1), style: TextStyle(color: accent, fontWeight: FontWeight.bold))),
+          const SizedBox(height: 16),
+          Text(name, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 2),
+          Text(subtitle, style: const TextStyle(fontSize: 12, color: Color(0xFFB8B6C8))),
+        ]),
+      ),
+    ));
+  }
+
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Gênny & Sophie Studio')),
-    body: SafeArea(child: ListView(padding: const EdgeInsets.all(20), children: [
-      const Text('Criação local no telemóvel. A primeira preparação necessita de internet e espaço livre.'),
-      const SizedBox(height: 16),
-      SegmentedButton<String>(segments: const [
-        ButtonSegment(value: 'Gênny', label: Text('Gênny')),
-        ButtonSegment(value: 'Sophie', label: Text('Sophie')),
-      ], selected: {character}, onSelectionChanged: busy ? null : (selection) => setState(() => character = selection.first)),
-      const SizedBox(height: 16),
-      TextField(controller: prompt, maxLines: 4, decoration: const InputDecoration(
-        border: OutlineInputBorder(), labelText: 'Descreva a imagem')),
-      TextButton.icon(onPressed: busy ? null : pickReference, icon: const Icon(Icons.photo),
-        label: Text(reference == null ? 'Adicionar foto de referência' : 'Referência: ${reference!.name}')),
-      TextButton.icon(onPressed: busy || reference == null ? null : () => setState(() => reference = null),
-        icon: const Icon(Icons.close), label: const Text('Remover referência')),
-      TextButton.icon(onPressed: busy ? null : voice, icon: const Icon(Icons.mic), label: const Text('Falar comando')),
-      FilledButton(onPressed: busy ? null : ready ? generate : prepareModel,
-        child: Text(ready ? 'CRIAR IMAGEM' : 'PREPARAR MODELO')),
-      const SizedBox(height: 14), Text(status),
-      if (busy) const LinearProgressIndicator(),
-      if (lastImage != null) Padding(padding: const EdgeInsets.only(top: 20), child: Image.memory(lastImage!)),
+    body: SafeArea(child: ListView(padding: const EdgeInsets.fromLTRB(22, 22, 22, 32), children: [
+      const Text('GÊNNY & SOPHIE', style: TextStyle(letterSpacing: 2.6, color: Color(0xFFC7B0FF),
+        fontSize: 13, fontWeight: FontWeight.w700)),
+      const SizedBox(height: 4),
+      const Text('Studio', style: TextStyle(fontSize: 36, fontWeight: FontWeight.w700)),
+      const SizedBox(height: 3),
+      const Text('Imagina. Descreve. Cria no teu telemóvel.',
+        style: TextStyle(fontSize: 14, color: Color(0xFFB8B6C8))),
+      const SizedBox(height: 30),
+      const Text('Escolhe a personagem', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+      const SizedBox(height: 12),
+      Row(children: [
+        characterCard('Gênny', 'Olhos verdes', const Color(0xFF9BBEFF)),
+        const SizedBox(width: 12),
+        characterCard('Sophie', 'Olhos azuis', const Color(0xFFE9A6DA)),
+      ]),
+      const SizedBox(height: 26),
+      const Text('A tua ideia', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+      const SizedBox(height: 12),
+      TextField(controller: prompt, maxLines: 4, minLines: 3,
+        decoration: InputDecoration(hintText: 'Como queres a fotografia?',
+          filled: true, fillColor: const Color(0xFF1B1B27),
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(20),
+            borderSide: const BorderSide(color: Color(0xFF343341))),
+          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(20),
+            borderSide: const BorderSide(color: Color(0xFF343341))))),
+      const SizedBox(height: 12),
+      Row(children: [
+        Expanded(child: OutlinedButton.icon(onPressed: busy ? null : pickReference,
+          icon: const Icon(Icons.add_photo_alternate_outlined),
+          label: Text(reference == null ? 'Referência' : 'Foto escolhida', overflow: TextOverflow.ellipsis))),
+        const SizedBox(width: 10),
+        Expanded(child: OutlinedButton.icon(onPressed: busy ? null : voice,
+          icon: const Icon(Icons.mic_none), label: const Text('Falar'))),
+      ]),
+      if (reference != null) Align(alignment: Alignment.centerLeft,
+        child: TextButton.icon(onPressed: busy ? null : () => setState(() => reference = null),
+          icon: const Icon(Icons.close, size: 16), label: Text(reference!.name,
+            maxLines: 1, overflow: TextOverflow.ellipsis))),
+      const SizedBox(height: 18),
+      SizedBox(height: 56, child: FilledButton.icon(
+        onPressed: busy ? null : ready ? generate : prepareModel,
+        icon: Icon(ready ? Icons.auto_awesome : Icons.download_outlined),
+        label: Text(ready ? 'CRIAR IMAGEM' : 'PREPARAR MODELO',
+          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, letterSpacing: 0.6)))),
+      const SizedBox(height: 18),
+      Container(padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(color: const Color(0xFF1B1B27), borderRadius: BorderRadius.circular(18)),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [Icon(busy ? Icons.hourglass_top : ready ? Icons.check_circle_outline : Icons.info_outline,
+            size: 18, color: const Color(0xFFC7B0FF)), const SizedBox(width: 10),
+            Expanded(child: Text(status, style: const TextStyle(fontSize: 13, height: 1.4)))]),
+          if (busy) const Padding(padding: EdgeInsets.only(top: 14), child: LinearProgressIndicator()),
+        ])),
+      if (lastImage != null) ...[
+        const SizedBox(height: 26),
+        const Text('A tua criação', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 12),
+        ClipRRect(borderRadius: BorderRadius.circular(20), child: Image.memory(lastImage!)),
+      ],
+      const SizedBox(height: 18),
+      const Text('O modelo é descarregado uma vez. Depois, as imagens são criadas no telemóvel.',
+        textAlign: TextAlign.center, style: TextStyle(fontSize: 12, color: Color(0xFF898798))),
     ])),
   );
 }

@@ -7,9 +7,12 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:image/image.dart' as img;
 
 import 'ffi_bindings.dart';
 import 'stable_diffusion_processor.dart';
+import 'img2img_processor.dart';
 
 // Fixed revision and checksum: a downloaded model is never accepted by size alone.
 const modelUrl = 'https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5/resolve/f03de32/v1-5-pruned-emaonly.safetensors?download=true';
@@ -31,7 +34,8 @@ class Studio extends StatefulWidget {
 
 class _StudioState extends State<Studio> {
   final prompt = TextEditingController();
-  StableDiffusionProcessor? engine;
+  dynamic engine;
+  XFile? reference;
   StreamSubscription<Map<String, dynamic>>? resultSubscription;
   String character = 'Gênny';
   String status = 'A preparar o motor local';
@@ -134,7 +138,7 @@ class _StudioState extends State<Studio> {
       update('A iniciar o motor no telemóvel…');
       await resultSubscription?.cancel();
       engine?.dispose();
-      engine = StableDiffusionProcessor(
+      engine = reference == null ? StableDiffusionProcessor(
         modelPath: modelPath!, useFlashAttention: true,
         modelType: SDType.SD_TYPE_Q4_0, schedule: Schedule.DEFAULT,
         vaeTiling: true, isDiffusionModelType: false,
@@ -145,6 +149,17 @@ class _StudioState extends State<Studio> {
           }
         },
         onProgress: (progress) => update('A criar imagem: ${progress.step}/${progress.totalSteps}'),
+      ) : Img2ImgProcessor(
+        modelPath: modelPath!, useFlashAttention: true,
+        modelType: SDType.SD_TYPE_Q4_0, schedule: Schedule.DEFAULT,
+        vaeTiling: true, isDiffusionModelType: false,
+        onLog: (log) {
+          if (log.level == -1 && mounted) {
+            update('Erro do motor: ${log.message}');
+            setState(() => busy = false);
+          }
+        },
+        onProgress: (progress) => update('A editar imagem: ${progress.step}/${progress.totalSteps}'),
       );
       resultSubscription = engine!.generationResultStream.listen((result) async {
         final image = result['image'] as ui.Image;
@@ -157,15 +172,44 @@ class _StudioState extends State<Studio> {
         if (mounted) setState(() { lastImage = data; busy = false; status = 'Imagem criada e guardada no aplicativo.'; });
       });
       // This runtime reports model errors via onLog; generation runs in its own isolate.
-      await engine!.generateImage(
-        prompt: '$description, adult $character, photographic portrait, realistic lighting',
-        negativePrompt: 'child, minor, extra limbs, malformed hands, blurry',
-        width: 512, height: 512, sampleSteps: 12, sampleMethod: SampleMethod.EULER_A.index,
-      );
+      final fullPrompt = '$description, adult $character, photographic portrait, realistic lighting';
+      if (reference == null) {
+        await (engine as StableDiffusionProcessor).generateImage(
+          prompt: fullPrompt, negativePrompt: 'child, minor, extra limbs, malformed hands, blurry',
+          width: 512, height: 512, sampleSteps: 12, sampleMethod: SampleMethod.EULER_A.index,
+        );
+      } else {
+        final decoded = img.decodeImage(await reference!.readAsBytes());
+        if (decoded == null) throw StateError('A foto de referência não pôde ser aberta.');
+        final resized = img.copyResize(decoded, width: 512, height: 512);
+        final rgb = Uint8List(512 * 512 * 3);
+        var index = 0;
+        for (var y = 0; y < 512; y++) {
+          for (var x = 0; x < 512; x++) {
+            final pixel = resized.getPixel(x, y);
+            rgb[index++] = pixel.r.toInt();
+            rgb[index++] = pixel.g.toInt();
+            rgb[index++] = pixel.b.toInt();
+          }
+        }
+        await (engine as Img2ImgProcessor).generateImg2Img(
+          inputImageData: rgb, inputWidth: 512, inputHeight: 512, channel: 3,
+          outputWidth: 512, outputHeight: 512, prompt: fullPrompt,
+          negativePrompt: 'child, minor, extra limbs, malformed hands, blurry',
+          sampleSteps: 12, sampleMethod: SampleMethod.EULER_A.index, strength: 0.5,
+        );
+      }
     } catch (e) {
       update('Falha ao criar imagem: $e');
       if (mounted) setState(() => busy = false);
     }
+  }
+
+  Future<void> pickReference() async {
+    try {
+      final selected = await ImagePicker().pickImage(source: ImageSource.gallery);
+      if (selected != null && mounted) setState(() => reference = selected);
+    } catch (e) { update('Não foi possível abrir a fotografia: $e'); }
   }
 
   Future<void> voice() async {
@@ -193,6 +237,10 @@ class _StudioState extends State<Studio> {
       const SizedBox(height: 16),
       TextField(controller: prompt, maxLines: 4, decoration: const InputDecoration(
         border: OutlineInputBorder(), labelText: 'Descreva a imagem')),
+      TextButton.icon(onPressed: busy ? null : pickReference, icon: const Icon(Icons.photo),
+        label: Text(reference == null ? 'Adicionar foto de referência' : 'Referência: ${reference!.name}')),
+      TextButton.icon(onPressed: busy || reference == null ? null : () => setState(() => reference = null),
+        icon: const Icon(Icons.close), label: const Text('Remover referência')),
       TextButton.icon(onPressed: busy ? null : voice, icon: const Icon(Icons.mic), label: const Text('Falar comando')),
       FilledButton(onPressed: busy ? null : ready ? generate : prepareModel,
         child: Text(ready ? 'CRIAR IMAGEM' : 'PREPARAR MODELO')),

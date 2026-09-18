@@ -1,0 +1,40 @@
+name: Functional Local Android APK
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths: [ '.github/workflows/functional-local.yml' ]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Studio
+        uses: actions/checkout@v4
+      - name: Checkout proven local diffusion engine
+        run: |
+          git clone --depth 1 https://github.com/xororz/local-dream.git local-dream
+          cd local-dream
+          git submodule update --init --recursive
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Build local diffusion app
+        working-directory: local-dream
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --stacktrace
+      - name: Collect APK
+        run: |
+          mkdir -p output
+          find local-dream -type f -name "*.apk" -exec cp {} output/ \;
+          ls -lah output
+      - name: Upload functional APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Genny-Sophie-Local-Engine
+          path: output/*.apk
+          if-no-files-found: error

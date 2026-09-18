@@ -49,15 +49,49 @@ class _StudioState extends State<Studio> {
   bool ready = false;
   Uint8List? lastImage;
   String? modelPath;
+  File? draftPhoto;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => prepareModel());
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await restoreDraft();
+      await prepareModel();
+    });
   }
 
   void update(String message) {
     if (mounted) setState(() => status = message);
+  }
+
+  Future<void> restoreDraft() async {
+    final dir = await getApplicationSupportDirectory();
+    final text = File('${dir.path}/studio_draft.txt');
+    draftPhoto = File('${dir.path}/studio_draft.jpg');
+    if (await text.exists()) {
+      prompt.text = await text.readAsString();
+      if (await draftPhoto!.exists()) reference = XFile(draftPhoto!.path);
+      update('A última criação foi interrompida. O texto e a fotografia foram recuperados.');
+    }
+  }
+
+  Future<void> saveDraft() async {
+    final dir = await getApplicationSupportDirectory();
+    await File('${dir.path}/studio_draft.txt').writeAsString(prompt.text, flush: true);
+    draftPhoto = File('${dir.path}/studio_draft.jpg');
+    if (reference != null) {
+      if (reference!.path != draftPhoto!.path) {
+        await reference!.saveTo(draftPhoto!.path);
+      }
+    } else if (await draftPhoto!.exists()) {
+      await draftPhoto!.delete();
+    }
+  }
+
+  Future<void> clearDraft() async {
+    final dir = await getApplicationSupportDirectory();
+    final text = File('${dir.path}/studio_draft.txt');
+    if (await text.exists()) await text.delete();
   }
 
   Future<bool> validModel(File file) async {
@@ -166,6 +200,7 @@ class _StudioState extends State<Studio> {
     setState(() { busy = true; lastImage = null; });
     try {
       update('A iniciar o motor no telemóvel…');
+      await saveDraft();
       await resultSubscription?.cancel();
       engine?.dispose();
       engine = reference == null ? StableDiffusionProcessor(
@@ -192,14 +227,20 @@ class _StudioState extends State<Studio> {
         onProgress: (progress) => update('A editar imagem: ${progress.step}/${progress.totalSteps}'),
       );
       resultSubscription = engine!.generationResultStream.listen((result) async {
-        final image = result['image'] as ui.Image;
-        final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
-        if (bytes == null) { update('Falha ao guardar a imagem.'); return; }
-        final data = bytes.buffer.asUint8List();
-        final directory = await getApplicationDocumentsDirectory();
-        final output = File('${directory.path}/studio_${DateTime.now().millisecondsSinceEpoch}.png');
-        await output.writeAsBytes(data, flush: true);
-        if (mounted) setState(() { lastImage = data; busy = false; status = 'Imagem criada e guardada no aplicativo.'; });
+        try {
+          final image = result['image'] as ui.Image;
+          final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+          if (bytes == null) throw StateError('Falha ao codificar a imagem.');
+          final data = bytes.buffer.asUint8List();
+          final directory = await getApplicationDocumentsDirectory();
+          final output = File('${directory.path}/studio_${DateTime.now().millisecondsSinceEpoch}.png');
+          await output.writeAsBytes(data, flush: true);
+          await clearDraft();
+          if (mounted) setState(() { lastImage = data; busy = false; status = 'Imagem criada e guardada no aplicativo.'; });
+        } catch (e) {
+          update('Falha ao guardar a imagem: $e');
+          if (mounted) setState(() => busy = false);
+        }
       });
       // This runtime reports model errors via onLog; generation runs in its own isolate.
       final fullPrompt = '$description, adult $character, photographic portrait, realistic lighting';
@@ -211,11 +252,12 @@ class _StudioState extends State<Studio> {
       } else {
         final decoded = img.decodeImage(await reference!.readAsBytes());
         if (decoded == null) throw StateError('A foto de referência não pôde ser aberta.');
-        final resized = img.copyResize(decoded, width: 512, height: 512);
-        final rgb = Uint8List(512 * 512 * 3);
+        const side = 384;
+        final resized = img.copyResize(decoded, width: side, height: side);
+        final rgb = Uint8List(side * side * 3);
         var index = 0;
-        for (var y = 0; y < 512; y++) {
-          for (var x = 0; x < 512; x++) {
+        for (var y = 0; y < side; y++) {
+          for (var x = 0; x < side; x++) {
             final pixel = resized.getPixel(x, y);
             rgb[index++] = pixel.r.toInt();
             rgb[index++] = pixel.g.toInt();
@@ -223,8 +265,8 @@ class _StudioState extends State<Studio> {
           }
         }
         await (engine as Img2ImgProcessor).generateImg2Img(
-          inputImageData: rgb, inputWidth: 512, inputHeight: 512, channel: 3,
-          outputWidth: 512, outputHeight: 512, prompt: fullPrompt,
+          inputImageData: rgb, inputWidth: side, inputHeight: side, channel: 3,
+          outputWidth: side, outputHeight: side, prompt: fullPrompt,
           negativePrompt: 'child, minor, extra limbs, malformed hands, blurry',
           sampleSteps: 12, sampleMethod: SampleMethod.EULER_A.index, strength: 0.5,
         );
@@ -237,7 +279,8 @@ class _StudioState extends State<Studio> {
 
   Future<void> pickReference() async {
     try {
-      final selected = await ImagePicker().pickImage(source: ImageSource.gallery);
+      final selected = await ImagePicker().pickImage(source: ImageSource.gallery,
+          maxWidth: 1024, maxHeight: 1024, imageQuality: 90);
       if (selected != null && mounted) setState(() => reference = selected);
     } catch (e) { update('Não foi possível abrir a fotografia: $e'); }
   }

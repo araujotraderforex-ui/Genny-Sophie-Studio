@@ -75,7 +75,7 @@ class _StudioState extends State<Studio> {
       final file = File('${directory.path}/$modelName');
       if (!await validModel(file)) {
         if (await file.exists()) await file.delete();
-        await downloadModel(file);
+        await downloadWithRetries(file);
         update('A verificar o modelo…');
         if (!await validModel(file)) {
           await file.delete();
@@ -86,9 +86,33 @@ class _StudioState extends State<Studio> {
       if (mounted) setState(() => ready = true);
       update('Motor preparado. Escreva um comando e toque em Criar.');
     } catch (e) {
-      update('Preparação interrompida: $e');
+      if (e is SocketException || e is HttpException || e is TimeoutException) {
+        update('A ligação foi interrompida. Toque em Preparar modelo para continuar de onde parou.');
+      } else {
+        update('Preparação interrompida: $e');
+      }
     } finally {
       if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> downloadWithRetries(File file) async {
+    final partial = File('${file.path}.part');
+    var previousSize = await partial.exists() ? await partial.length() : 0;
+    var stalled = 0;
+    for (var attempt = 1; attempt <= 100; attempt++) {
+      try {
+        await downloadModel(file);
+        return;
+      } catch (e) {
+        if (e is! SocketException && e is! HttpException && e is! TimeoutException) rethrow;
+        final size = await partial.exists() ? await partial.length() : 0;
+        stalled = size > previousSize ? 0 : stalled + 1;
+        previousSize = size;
+        if (stalled >= 8 || attempt == 100) rethrow;
+        update('A ligação caiu. A retomar automaticamente…');
+        await Future.delayed(Duration(seconds: (attempt * 2).clamp(2, 15).toInt()));
+      }
     }
   }
 

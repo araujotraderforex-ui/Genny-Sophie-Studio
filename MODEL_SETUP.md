@@ -1,0 +1,2 @@
+# Local image engine
+Target: Galaxy A55 5G / 8 GB RAM, no paid API. The UI, text/voice capture and reference import are implemented separately from inference. Production generation still requires compatible model weights plus a mobile inference runtime; multi-GB weights should be installed on first run rather than embedded in the APK.

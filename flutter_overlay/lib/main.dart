@@ -38,7 +38,7 @@ class Studio extends StatefulWidget {
   State<Studio> createState() => _StudioState();
 }
 
-class _StudioState extends State<Studio> {
+class _StudioState extends State<Studio> with WidgetsBindingObserver {
   final prompt = TextEditingController();
   dynamic engine;
   XFile? reference;
@@ -54,6 +54,7 @@ class _StudioState extends State<Studio> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await restoreDraft();
       await prepareModel();
@@ -193,6 +194,31 @@ class _StudioState extends State<Studio> {
     }
   }
 
+  String expandedPrompt(String description) {
+    final subject = character == 'Gênny'
+        ? 'adult woman Gênny, green eyes'
+        : 'adult woman Sophie, vivid blue eyes, platinum blonde hair';
+    return '$description, $subject, natural adult proportions, coherent pose, '
+        'photorealistic, realistic skin texture, realistic lighting, detailed face, '
+        'anatomically correct hands and feet, five fingers, two arms, two legs';
+  }
+
+  Future<void> releaseEngine() async {
+    await resultSubscription?.cancel();
+    resultSubscription = null;
+    try { engine?.dispose(); } catch (_) {}
+    engine = null;
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached ||
+        state == AppLifecycleState.hidden) {
+      releaseEngine();
+    }
+  }
+
   Future<void> generate() async {
     if (busy || !ready || modelPath == null) return;
     final description = prompt.text.trim();
@@ -201,8 +227,7 @@ class _StudioState extends State<Studio> {
     try {
       update('A iniciar o motor no telemóvel…');
       await saveDraft();
-      await resultSubscription?.cancel();
-      engine?.dispose();
+      await releaseEngine();
       engine = reference == null ? StableDiffusionProcessor(
         modelPath: modelPath!, useFlashAttention: true,
         modelType: SDType.SD_TYPE_Q4_0, schedule: Schedule.DEFAULT,
@@ -231,11 +256,13 @@ class _StudioState extends State<Studio> {
           final image = result['image'] as ui.Image;
           final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
           if (bytes == null) throw StateError('Falha ao codificar a imagem.');
-          final data = bytes.buffer.asUint8List();
+          final data = Uint8List.fromList(bytes.buffer.asUint8List());
+          image.dispose();
           final directory = await getApplicationDocumentsDirectory();
           final output = File('${directory.path}/studio_${DateTime.now().millisecondsSinceEpoch}.png');
           await output.writeAsBytes(data, flush: true);
           await clearDraft();
+          await releaseEngine();
           if (mounted) setState(() { lastImage = data; busy = false; status = 'Imagem criada e guardada no aplicativo.'; });
         } catch (e) {
           update('Falha ao guardar a imagem: $e');
@@ -243,16 +270,16 @@ class _StudioState extends State<Studio> {
         }
       });
       // This runtime reports model errors via onLog; generation runs in its own isolate.
-      final fullPrompt = '$description, adult $character, photographic portrait, realistic lighting';
+      final fullPrompt = expandedPrompt(description);
       if (reference == null) {
         await (engine as StableDiffusionProcessor).generateImage(
-          prompt: fullPrompt, negativePrompt: 'child, minor, extra limbs, malformed hands, blurry',
-          width: 512, height: 512, sampleSteps: 12, sampleMethod: SampleMethod.EULER_A.index,
+          prompt: fullPrompt, negativePrompt: 'child, minor, extra limbs, extra arms, extra legs, duplicate body, malformed hands, malformed feet, fused fingers, missing fingers, blurry, low quality',
+          width: 384, height: 384, sampleSteps: 8, sampleMethod: SampleMethod.EULER_A.index,
         );
       } else {
         final decoded = img.decodeImage(await reference!.readAsBytes());
         if (decoded == null) throw StateError('A foto de referência não pôde ser aberta.');
-        const side = 384;
+        const side = 320;
         final resized = img.copyResize(decoded, width: side, height: side);
         final rgb = Uint8List(side * side * 3);
         var index = 0;
@@ -267,8 +294,8 @@ class _StudioState extends State<Studio> {
         await (engine as Img2ImgProcessor).generateImg2Img(
           inputImageData: rgb, inputWidth: side, inputHeight: side, channel: 3,
           outputWidth: side, outputHeight: side, prompt: fullPrompt,
-          negativePrompt: 'child, minor, extra limbs, malformed hands, blurry',
-          sampleSteps: 12, sampleMethod: SampleMethod.EULER_A.index, strength: 0.5,
+          negativePrompt: 'child, minor, extra limbs, extra arms, extra legs, duplicate body, malformed hands, malformed feet, fused fingers, missing fingers, blurry, low quality',
+          sampleSteps: 8, sampleMethod: SampleMethod.EULER_A.index, strength: 0.5,
         );
       }
     } catch (e) {
@@ -294,7 +321,11 @@ class _StudioState extends State<Studio> {
 
   @override
   void dispose() {
-    prompt.dispose(); resultSubscription?.cancel(); engine?.dispose(); super.dispose();
+    WidgetsBinding.instance.removeObserver(this);
+    prompt.dispose();
+    releaseEngine();
+    lastImage = null;
+    super.dispose();
   }
 
   Widget characterCard(String name, String subtitle, Color accent) {
@@ -325,10 +356,7 @@ class _StudioState extends State<Studio> {
   @override
   Widget build(BuildContext context) => Scaffold(
     body: SafeArea(child: ListView(padding: const EdgeInsets.fromLTRB(22, 22, 22, 32), children: [
-      const Text('GÊNNY & SOPHIE', style: TextStyle(letterSpacing: 2.6, color: Color(0xFFC7B0FF),
-        fontSize: 13, fontWeight: FontWeight.w700)),
-      const SizedBox(height: 4),
-      const Text('Studio', style: TextStyle(fontSize: 36, fontWeight: FontWeight.w700)),
+      const Text('ESTÚDIO G & S', style: TextStyle(fontSize: 32, fontWeight: FontWeight.w700)),
       const SizedBox(height: 3),
       const Text('Imagina. Descreve. Cria no teu telemóvel.',
         style: TextStyle(fontSize: 14, color: Color(0xFFB8B6C8))),

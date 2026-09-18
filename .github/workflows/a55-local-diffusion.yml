@@ -35,6 +35,12 @@ jobs:
           p.write_text(text)
           p = Path('upstream/android/app/build.gradle')
           p.write_text(p.read_text().replace('applicationId "com.example.local_diffusion"', 'applicationId "com.gennysophie.studio"'))
+          p = Path('upstream/android/app/src/main/AndroidManifest.xml')
+          text = p.read_text().replace('Local Diffusion', 'Gênny &amp; Sophie Studio')
+          for permission in ('READ_EXTERNAL_STORAGE', 'WRITE_EXTERNAL_STORAGE', 'MANAGE_EXTERNAL_STORAGE'):
+              text = text.replace(f'    <uses-permission android:name="android.permission.{permission}" />', '')
+              text = text.replace(f'    <uses-permission android:name="android.permission.{permission}"/>', '')
+          p.write_text(text)
           PY
       - name: Build and check APK
         working-directory: upstream

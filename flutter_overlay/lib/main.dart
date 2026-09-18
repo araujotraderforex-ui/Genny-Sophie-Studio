@@ -41,6 +41,8 @@ class Studio extends StatefulWidget {
 class _StudioState extends State<Studio> with WidgetsBindingObserver {
   final prompt = TextEditingController();
   dynamic engine;
+  bool engineLoaded = false;
+  bool engineForReference = false;
   XFile? reference;
   StreamSubscription<Map<String, dynamic>>? resultSubscription;
   String character = 'Gênny';
@@ -118,8 +120,10 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
         }
       }
       modelPath = file.path;
-      if (mounted) setState(() => ready = true);
-      update('Motor preparado. Escreva um comando e toque em Criar.');
+      update('A carregar o motor local…');
+      await ensureEngine(forReference: reference != null);
+      if (mounted) setState(() => ready = engineLoaded);
+      if (engineLoaded) update('Motor pronto. Escreva um comando e toque em Criar.');
     } catch (e) {
       if (e is SocketException || e is HttpException || e is TimeoutException) {
         update('A ligação foi interrompida. Toque em Preparar modelo para continuar de onde parou.');
@@ -208,15 +212,44 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
     resultSubscription = null;
     try { engine?.dispose(); } catch (_) {}
     engine = null;
+    engineLoaded = false;
+  }
+
+  Future<void> ensureEngine({required bool forReference}) async {
+    if (engine != null && engineLoaded && engineForReference == forReference) return;
+    await releaseEngine();
+    final loaded = Completer<void>();
+    void onLoaded() {
+      engineLoaded = true;
+      if (!loaded.isCompleted) loaded.complete();
+    }
+    void onError(LogMessage log) {
+      if (log.level == -1 && !loaded.isCompleted) {
+        loaded.completeError(StateError(log.message));
+      }
+      if (log.level == -1) update('Erro do motor: ${log.message}');
+    }
+    engineForReference = forReference;
+    engine = !forReference ? StableDiffusionProcessor(
+      modelPath: modelPath!, useFlashAttention: true,
+      modelType: SDType.SD_TYPE_Q4_0, schedule: Schedule.DEFAULT,
+      vaeTiling: true, isDiffusionModelType: false,
+      onModelLoaded: onLoaded, onLog: onError,
+      onProgress: (p) => update('A criar imagem: ${p.step}/${p.totalSteps}'),
+    ) : Img2ImgProcessor(
+      modelPath: modelPath!, useFlashAttention: true,
+      modelType: SDType.SD_TYPE_Q4_0, schedule: Schedule.DEFAULT,
+      vaeTiling: true, isDiffusionModelType: false,
+      onModelLoaded: onLoaded, onLog: onError,
+      onProgress: (p) => update('A editar imagem: ${p.step}/${p.totalSteps}'),
+    );
+    await loaded.future.timeout(const Duration(minutes: 5));
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.detached ||
-        state == AppLifecycleState.hidden) {
-      releaseEngine();
-    }
+    // Do not dispose the inference context on screen-off or app switching.
+    // A running generation must survive paused/hidden states.
   }
 
   Future<void> generate() async {
@@ -225,32 +258,10 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
     if (description.isEmpty) { update('Descreva a imagem primeiro.'); return; }
     setState(() { busy = true; lastImage = null; });
     try {
-      update('A iniciar o motor no telemóvel…');
+      update('A criar imagem…');
       await saveDraft();
-      await releaseEngine();
-      engine = reference == null ? StableDiffusionProcessor(
-        modelPath: modelPath!, useFlashAttention: true,
-        modelType: SDType.SD_TYPE_Q4_0, schedule: Schedule.DEFAULT,
-        vaeTiling: true, isDiffusionModelType: false,
-        onLog: (log) {
-          if (log.level == -1 && mounted) {
-            update('Erro do motor: ${log.message}');
-            setState(() => busy = false);
-          }
-        },
-        onProgress: (progress) => update('A criar imagem: ${progress.step}/${progress.totalSteps}'),
-      ) : Img2ImgProcessor(
-        modelPath: modelPath!, useFlashAttention: true,
-        modelType: SDType.SD_TYPE_Q4_0, schedule: Schedule.DEFAULT,
-        vaeTiling: true, isDiffusionModelType: false,
-        onLog: (log) {
-          if (log.level == -1 && mounted) {
-            update('Erro do motor: ${log.message}');
-            setState(() => busy = false);
-          }
-        },
-        onProgress: (progress) => update('A editar imagem: ${progress.step}/${progress.totalSteps}'),
-      );
+      await ensureEngine(forReference: reference != null);
+      await channel.invokeMethod('startGenerationService');
       resultSubscription = engine!.generationResultStream.listen((result) async {
         try {
           final image = result['image'] as ui.Image;
@@ -262,7 +273,7 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
           final output = File('${directory.path}/studio_${DateTime.now().millisecondsSinceEpoch}.png');
           await output.writeAsBytes(data, flush: true);
           await clearDraft();
-          await releaseEngine();
+          await channel.invokeMethod('generationFinished');
           if (mounted) setState(() { lastImage = data; busy = false; status = 'Imagem criada e guardada no aplicativo.'; });
         } catch (e) {
           update('Falha ao guardar a imagem: $e');
@@ -299,6 +310,7 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
         );
       }
     } catch (e) {
+      try { await channel.invokeMethod('stopGenerationService'); } catch (_) {}
       update('Falha ao criar imagem: $e');
       if (mounted) setState(() => busy = false);
     }
@@ -308,7 +320,13 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
     try {
       final selected = await ImagePicker().pickImage(source: ImageSource.gallery,
           maxWidth: 1024, maxHeight: 1024, imageQuality: 90);
-      if (selected != null && mounted) setState(() => reference = selected);
+      if (selected != null && mounted) {
+        setState(() { reference = selected; ready = false; });
+        update('A preparar o motor para a referência…');
+        await ensureEngine(forReference: true);
+        if (mounted) setState(() => ready = true);
+        update('Motor pronto. Toque em Criar quando quiser.');
+      }
     } catch (e) { update('Não foi possível abrir a fotografia: $e'); }
   }
 
@@ -388,7 +406,13 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
           icon: const Icon(Icons.mic_none), label: const Text('Falar'))),
       ]),
       if (reference != null) Align(alignment: Alignment.centerLeft,
-        child: TextButton.icon(onPressed: busy ? null : () => setState(() => reference = null),
+        child: TextButton.icon(onPressed: busy ? null : () async {
+          setState(() { reference = null; ready = false; });
+          update('A preparar o motor…');
+          await ensureEngine(forReference: false);
+          if (mounted) setState(() => ready = true);
+          update('Motor pronto. Toque em Criar quando quiser.');
+        },
           icon: const Icon(Icons.close, size: 16), label: Text(reference!.name,
             maxLines: 1, overflow: TextOverflow.ellipsis))),
       const SizedBox(height: 18),

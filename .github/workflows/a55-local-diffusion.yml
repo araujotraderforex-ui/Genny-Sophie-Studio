@@ -1,61 +1,50 @@
-name: A55 Local Diffusion APK
-
+name: Gênny & Sophie Studio ARM64 APK
 on:
-  workflow_dispatch:
   push:
-    branches: [ main ]
-    paths:
-      - '.github/workflows/a55-local-diffusion.yml'
-
+    branches: [main]
+    paths: ['flutter_overlay/**', '.github/workflows/a55-local-diffusion.yml']
+  workflow_dispatch:
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - name: Checkout Local Diffusion
-        uses: actions/checkout@v4
-        with:
-          repository: rmatif/Local-Diffusion
-          ref: main
-          submodules: recursive
-
-      - name: Set up Java
-        uses: actions/setup-java@v4
+      - uses: actions/checkout@v4
+      - name: Fetch pinned local inference runtime
+        run: |
+          git clone https://github.com/rmatif/Local-Diffusion.git upstream
+          cd upstream
+          git checkout 184b7f92cf2f810e7d5eb4b04b190a5da829005f
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.29.3'
           channel: stable
           cache: true
-
-      - name: Pin compatible UI dependency
+      - name: Apply Studio interface and native bridge
         run: |
+          cp flutter_overlay/lib/main.dart upstream/lib/main.dart
+          cp flutter_overlay/android/app/src/main/kotlin/com/example/local_diffusion/MainActivity.kt upstream/android/app/src/main/kotlin/com/example/local_diffusion/MainActivity.kt
           python3 - <<'PY'
           from pathlib import Path
-          p=Path("pubspec.yaml")
-          s=p.read_text()
-          s=s.replace("shadcn_ui: ^0.19.3", "shadcn_ui: 0.19.3")
-          p.write_text(s)
+          p = Path('upstream/pubspec.yaml')
+          text = p.read_text().replace('shadcn_ui: ^0.19.3', 'shadcn_ui: 0.19.3')
+          text = text.replace('  ffi: ^2.1.3', '  crypto: ^3.0.3\n  ffi: ^2.1.3')
+          p.write_text(text)
+          p = Path('upstream/android/app/build.gradle')
+          p.write_text(p.read_text().replace('applicationId "com.example.local_diffusion"', 'applicationId "com.gennysophie.studio"'))
           PY
-
-      - name: Flutter dependencies
-        run: flutter pub get
-
-      - name: Build ARM64 release APK
-        run: flutter build apk --release --target-platform android-arm64
-
-      - name: Collect APK
+      - name: Build and check APK
+        working-directory: upstream
         run: |
-          mkdir -p output
-          cp build/app/outputs/flutter-apk/app-release.apk output/Genny-Sophie-A55-LocalDiffusion.apk
-          ls -lh output
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
+          flutter pub get
+          flutter analyze lib/main.dart --no-fatal-infos
+          flutter build apk --release --target-platform android-arm64
+          test -s build/app/outputs/flutter-apk/app-release.apk
+      - uses: actions/upload-artifact@v4
         with:
-          name: Genny-Sophie-A55-LocalDiffusion
-          path: output/Genny-Sophie-A55-LocalDiffusion.apk
+          name: Genny-Sophie-Studio-A55
+          path: upstream/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error

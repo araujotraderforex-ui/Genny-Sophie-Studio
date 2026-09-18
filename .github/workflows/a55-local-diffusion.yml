@@ -1,0 +1,50 @@
+name: A55 Local Diffusion APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/a55-local-diffusion.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Local Diffusion
+        uses: actions/checkout@v4
+        with:
+          repository: rmatif/Local-Diffusion
+          ref: main
+          submodules: recursive
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Flutter dependencies
+        run: flutter pub get
+
+      - name: Build ARM64 release APK
+        run: flutter build apk --release --target-platform android-arm64
+
+      - name: Collect APK
+        run: |
+          mkdir -p output
+          cp build/app/outputs/flutter-apk/app-release.apk output/Genny-Sophie-A55-LocalDiffusion.apk
+          ls -lh output
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Genny-Sophie-A55-LocalDiffusion
+          path: output/Genny-Sophie-A55-LocalDiffusion.apk
+          if-no-files-found: error

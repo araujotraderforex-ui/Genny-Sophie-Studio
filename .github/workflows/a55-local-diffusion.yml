@@ -26,6 +26,8 @@ jobs:
       - name: Apply Studio interface and native bridge
         run: |
           cp flutter_overlay/lib/main.dart upstream/lib/main.dart
+          cp flutter_overlay/lib/img2img_processor.dart upstream/lib/img2img_processor.dart
+          cp flutter_overlay/lib/stable_diffusion_processor.dart upstream/lib/stable_diffusion_processor.dart
           cp flutter_overlay/android/app/src/main/kotlin/com/example/local_diffusion/MainActivity.kt upstream/android/app/src/main/kotlin/com/example/local_diffusion/MainActivity.kt
           python3 - <<'PY'
           from pathlib import Path
